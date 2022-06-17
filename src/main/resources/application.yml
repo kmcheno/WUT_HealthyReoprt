@@ -1,0 +1,22 @@
+server:
+  port: 8090
+  forward-headers-strategy: native
+  error:
+    include-message: always
+spring:
+  datasource:
+    type: com.zaxxer.hikari.HikariDataSource
+    # H2 database configuration.
+    driver-class-name: org.h2.Driver
+    url: jdbc:h2:file:${user.home}/.hr/db/hr
+    username: admin
+    password: 123456
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  freemarker:
+    suffix: .ftl
+    template-loader-path:
+      - classpath:/templates/
+    expose-spring-macro-helpers: false
