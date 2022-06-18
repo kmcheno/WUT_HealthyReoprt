@@ -2,6 +2,7 @@ package com.ming.healthyreport.controller;
 
 import com.ming.healthyreport.model.User;
 import com.ming.healthyreport.repository.UserRepository;
+import com.ming.healthyreport.task.DailyReport;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
@@ -14,9 +15,11 @@ import org.springframework.web.bind.annotation.RequestMethod;
 @RequestMapping("/user")
 public class UserController {
     private final UserRepository repository;
+    private final DailyReport dailyReport;
 
-    public UserController(UserRepository repository) {
+    public UserController(UserRepository repository, DailyReport dailyReport) {
         this.repository = repository;
+        this.dailyReport = dailyReport;
     }
 
     @RequestMapping(value = "{id}", method = RequestMethod.GET)
@@ -36,8 +39,10 @@ public class UserController {
         return new ResponseEntity<Boolean>(HttpStatus.OK);
     }
 
+
     @RequestMapping("/begin")
     public String begin() {
+        dailyReport.scheduledReport();
         return "error";
     }
 }

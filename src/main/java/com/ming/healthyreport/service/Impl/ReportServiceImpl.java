@@ -14,13 +14,14 @@ import com.github.rholder.retry.Retryer;
 import com.github.rholder.retry.RetryerBuilder;
 import com.github.rholder.retry.StopStrategies;
 import com.github.rholder.retry.WaitStrategies;
+import com.ming.healthyreport.model.PostDTO;
 import com.ming.healthyreport.model.User;
 import com.ming.healthyreport.service.ReportService;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -30,9 +31,9 @@ import org.springframework.stereotype.Service;
 @Slf4j
 @Service
 public class ReportServiceImpl implements ReportService {
-    private static List<String> uaList;
-    private static HashMap<String, String> urls;
-    private static HashMap<String, List<String>> header;
+    private static final List<String> uaList;
+    private static final HashMap<String, String> urls;
+    private static final HashMap<String, List<String>> header;
 
     static {
         uaList = CollUtil.newArrayList(
@@ -64,31 +65,44 @@ public class ReportServiceImpl implements ReportService {
             //抛出runtime异常、checked异常时都会重试，但是抛出error不会重试。
             .retryIfException()
             //返回false也需要重试
-            .retryIfResult(aBoolean -> false)
+            .retryIfResult(aBoolean -> Objects.equals(aBoolean, false))
             //重调策略
             .withWaitStrategy(WaitStrategies.fixedWait(waitTime, TimeUnit.SECONDS))
             //尝试次数
             .withStopStrategy(StopStrategies.stopAfterAttempt(attemptNum))
             .build();
 
+        StringBuilder sb = new StringBuilder();
         try {
             retryer.call(() -> {
-                boolean flag = true;
+                PostDTO postDTO;
                 try {
-                    if (!checkBind() || !bindUserInfo(user) || !monitorRegister()) {
-                        flag = false;
+                    postDTO = checkBind();
+                    if (!postDTO.isStatus()) {
+                        sb.append(postDTO.getData()).append("\n");
+                        return false;
                     }
+                    postDTO = bindUserInfo(user);
+                    if (!postDTO.isStatus()) {
+                        sb.append(postDTO.getData()).append("\n");
+                        return false;
+                    }
+                    postDTO = monitorRegister();
+                    if (!postDTO.isStatus()) {
+                        sb.append(postDTO.getData()).append("\n");
+                        return false;
+                    }
+                    return true;
                 } finally {
-                    flag &= cancelBind();
+                    cancelBind();
                 }
-                return flag;
             });
         } catch (ExecutionException | RetryException | IllegalStateException e) {
             log.warn("填报异常：{}", e.toString());
             MailUtil.send(
                 user.getMail(),
                 "填报失败",
-                StrUtil.format("\"今日填报失败，请手动填报！失败原因：\n{}\"", e.toString()),
+                StrUtil.format("今日填报失败，请手动填报！\n各次失败原因：\n{} \n 异常状态：{}", sb, e.toString()),
                 false
             );
             return false;
@@ -97,36 +111,32 @@ public class ReportServiceImpl implements ReportService {
         return true;
     }
 
-    private boolean checkBind() {
+    private PostDTO checkBind() {
         Set<String> userAgent = RandomUtil.randomEleSet(uaList, 1);
         header.put("User-Agent", new ArrayList<>(userAgent));
-        JSONObject data = JSONUtil.createObj()
-            .set("sn", "")
-            .set("idCard", "");
-        String decodeData = postMethod(urls.get("checkBind"), data.toString());
-        JSONObject decodeDataJson = JSONUtil.parseObj(decodeData);
-        if (StrUtil.isEmpty(decodeData) || decodeDataJson.getBool("bind")) {
-            throw new IllegalStateException("获取sessionID失败！");
+        JSONObject data = JSONUtil.createObj().set("sn", "").set("idCard", "");
+        PostDTO postDTO = postMethod(urls.get("checkBind"), data.toString());
+        if (postDTO.isStatus()) {
+            JSONObject decodeDataJson = JSONUtil.parseObj(postDTO.getData());
+            if (decodeDataJson.getBool("bind")) {
+                postDTO.setStatus(false);
+                return postDTO;
+            }
+            header.put(
+                "Cookie",
+                List.of(StrUtil.format("JSESSIONID={}", decodeDataJson.getStr("sessionId")))
+            );
         }
-        header.put(
-            "Cookie",
-            List.of(StrUtil.format("JSESSIONID={}", decodeDataJson.getStr("sessionId")))
-        );
-        return true;
+        return postDTO;
     }
 
-    private boolean bindUserInfo(User user) {
+    private PostDTO bindUserInfo(User user) {
         JSONObject data = JSONUtil.createObj()
-            .set("sn", user.getUserId())
-            .set("idCard", user.getUserPassword());
-        String decodeData = postMethod(urls.get("bindUserInfo"), data.toString());
-        if (StrUtil.isEmpty(decodeData)) {
-            throw new IllegalStateException("绑定用户失败！");
-        }
-        return true;
+            .set("sn", user.getUserId()).set("idCard", user.getUserPassword());
+        return postMethod(urls.get("bindUserInfo"), data.toString());
     }
 
-    private boolean monitorRegister() {
+    private PostDTO monitorRegister() {
         String province = "湖北省";
         String city = "武汉市";
         String county = "洪山区";
@@ -152,35 +162,34 @@ public class ReportServiceImpl implements ReportService {
             .set("province", province)
             .set("city", city)
             .set("county", county);
-        String decodeData = postMethod(urls.get("monitorRegister"), data.toString());
-        if (StrUtil.isEmpty(decodeData)) {
-            throw new IllegalStateException("提交失败！");
-        }
-        return true;
+        return postMethod(urls.get("monitorRegister"), data.toString());
     }
 
-    private boolean cancelBind() {
-        String decodeData = postMethod(urls.get("cancelBind"), "");
-        if (StrUtil.isEmpty(decodeData)) {
-            throw new IllegalStateException("取消绑定失败！");
-        }
-        return true;
+    private void cancelBind() {
+        postMethod(urls.get("cancelBind"), "");
     }
 
-    private String postMethod(String url, String data) {
+    private PostDTO postMethod(String url, String data) {
         data = Base64.encode(data);
+        String decodeData;
+        boolean status;
         HttpRequest request = HttpRequest.post(url).header(header).body(data);
         try (HttpResponse response = request.execute()) {
             JSONObject responseData = JSONUtil.parseObj(response.body());
-            if (responseData.getBool("status")) {
+            status = responseData.getBool("status");
+            if (status) {
                 byte[] decode = Base64.decode(responseData.getStr("data"));
-                JSONObject decodeData = JSONUtil.parseObj(
-                    Arrays.equals("解绑成功".getBytes(StandardCharsets.UTF_8), decode) ? "" : decode
-                );
-                log.info("返回消息:{}", decodeData);
-                return decodeData.toString();
+                try {
+                    decodeData = JSONUtil.parseObj(decode).toString();
+                } catch (Exception e) {
+                    decodeData = StrUtil.str(decode, StandardCharsets.UTF_8);
+                }
+            } else {
+                decodeData = responseData.getStr("message");
+                log.info("请求url:{}, 请求message：{}", url, decodeData);
             }
+            log.info("返回消息:{}", decodeData);
         }
-        return "";
+        return PostDTO.builder().status(status).data(decodeData).build();
     }
 }
