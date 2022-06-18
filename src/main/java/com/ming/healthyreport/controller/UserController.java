@@ -22,27 +22,42 @@ public class UserController {
         this.dailyReport = dailyReport;
     }
 
+    /**
+     * 获取用户byID
+     * @param user 用户id，利用了spring data的web支持
+     * @return 用户信息
+     */
     @RequestMapping(value = "{id}", method = RequestMethod.GET)
     public ResponseEntity<User> getUserByID(@PathVariable("id") User user) {
         return new ResponseEntity<User>(user, HttpStatus.OK);
     }
 
+    /**
+     * 添加用户
+     * @param user 用户信息
+     */
     @RequestMapping(method = RequestMethod.POST)
     public ResponseEntity<Object> addUser(@RequestBody User user) {
         repository.save(user);
         return new ResponseEntity<Object>(HttpStatus.OK);
     }
 
+    /**
+     * 删除用户byID
+     * @param id 用户主键
+     */
     @RequestMapping(value = "{id}", method = RequestMethod.DELETE)
     public ResponseEntity<Boolean> deleteUser(@PathVariable("id") Long id) {
         repository.deleteById(id);
         return new ResponseEntity<Boolean>(HttpStatus.OK);
     }
 
-
+    /**
+     * 手动触发填报
+     */
     @RequestMapping("/begin")
-    public String begin() {
+    public ResponseEntity<Boolean> begin() {
         dailyReport.scheduledReport();
-        return "error";
+        return new ResponseEntity<Boolean>(HttpStatus.OK);
     }
 }
