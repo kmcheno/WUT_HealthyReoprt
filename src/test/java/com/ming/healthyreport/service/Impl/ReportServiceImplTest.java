@@ -10,8 +10,8 @@ class ReportServiceImplTest {
     @Test
     void report() {
         User user = new User();
-        user.setUserId("0121814670315");
-        user.setUserPassword("294076");
+        user.setUserId("xxx");
+        user.setUserPassword("xxx");
         new ReportServiceImpl().report(user, 10, 5);
     }
 }
